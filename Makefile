@@ -1,11 +1,12 @@
-.PHONY: help install start chrome-debug login login-all typecheck health clean
+.PHONY: help install start chrome-debug chrome-debug-headless login login-all typecheck health clean
 
 # 默认目标
 help:
 	@echo "zero-token — 可用目标："
 	@echo "  make install     安装依赖 (pnpm install)"
 	@echo "  make start       启动 OpenAI 兼容网关 (可设 PORT=3001)"
-	@echo "  make chrome-debug  启动带 --remote-debugging-port 的 Chrome (attach 登录用)"
+	@echo "  make chrome-debug          带 --remote-debugging-port 的 Chrome (attach 登录用)"
+	@echo "  make chrome-debug-headless 同上，无头模式 (仍暴露 CDP；登录/扫码可能需有界面时勿用)"
 	@echo "  make login       浏览器登录并保存凭据 (需设 PROVIDER=...)"
 	@echo "  make login-all   按顺序登录全部平台 (单站失败不中断，见 README)"
 	@echo "  make typecheck   运行 TypeScript 检查"
@@ -13,7 +14,7 @@ help:
 	@echo "  make clean       删除 node_modules 与锁文件 (慎用)"
 	@echo ""
 	@echo "示例："
-	@echo "  make chrome-debug"
+	@echo "  make chrome-debug  # 或: CHROME_HEADLESS=1 make chrome-debug  /  make chrome-debug-headless"
 	@echo "  make login PROVIDER=chatgpt-web"
 	@echo "  make login-all"
 	@echo "  PORT=3001 make start"
@@ -29,6 +30,10 @@ start:
 
 chrome-debug:
 	@bash scripts/start-chrome-debug.sh
+
+# 无头 + 远程调试（见 scripts/start-chrome-debug.sh 中 CHROME_HEADLESS）
+chrome-debug-headless:
+	@CHROME_HEADLESS=1 bash scripts/start-chrome-debug.sh
 
 # 用法: make login PROVIDER=deepseek-web
 PROVIDER ?=
