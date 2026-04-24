@@ -11,7 +11,8 @@ import type {
 import { getWebStreamFactory } from "../streams/web-stream-factories.js";
 import { loadCredentials } from "../credentials.js";
 import { findModelDefinition, parseCompositeModelId } from "../catalog.js";
-import { tryCreateBrowserPiEventStream } from "./browser-pi-bridge.js";
+import { shouldPreferBrowserChat, tryCreateBrowserPiEventStream } from "./browser-pi-bridge.js";
+import { stripInboundMeta } from "../streams/strip-inbound-meta.js";
 
 type OpenAIChatMessage = {
   role: string;
@@ -25,6 +26,10 @@ type ChatCompletionsBody = {
   temperature?: number;
   max_tokens?: number;
 };
+
+function isUserRole(role: string | undefined): boolean {
+  return (role || "").toLowerCase() === "user";
+}
 
 function extractText(content: unknown): string {
   if (typeof content === "string") {
@@ -46,14 +51,17 @@ function extractText(content: unknown): string {
   return String(content ?? "");
 }
 
-/** 将对话拼成单条用户可见文本，交给真实浏览器中的输入框（多轮时一并传入）。 */
-export function formatMessagesForBrowserPrompt(messages: OpenAIChatMessage[]): string {
-  return messages
-    .map((m) => {
-      const role = (m.role || "user").trim();
-      return `${role}:\n${extractText(m.content)}`;
-    })
-    .join("\n\n");
+/**
+ * 浏览器里仅模拟「当前这一条」发入输入框。与 `createChatGPTWebStreamFn` 一致，只取**最后一条 user**，
+ * 经 stripInboundMeta；若再拼多轮为 `user:\\n...\\n\\nuser:`，会整段被键入，出现 "user: 你好 user: ..." 等异常。
+ */
+
+function lastUserPromptForBrowserInput(messages: OpenAIChatMessage[]): string {
+  const last = [...messages].toReversed().find((m) => isUserRole(m.role));
+  if (!last) {
+    return "";
+  }
+  return stripInboundMeta(extractText(last.content).trim());
 }
 
 function openaiMessagesToContext(messages: OpenAIChatMessage[]): Context {
@@ -65,7 +73,7 @@ function openaiMessagesToContext(messages: OpenAIChatMessage[]): Context {
       systemBits.push(extractText(m.content));
       continue;
     }
-    if (m.role === "user") {
+    if (isUserRole(m.role)) {
       const text = extractText(m.content);
       const msg: UserMessage = {
         role: "user",
@@ -146,7 +154,10 @@ export async function runChatCompletion(body: ChatCompletionsBody, signal?: Abor
     );
   }
   const model = buildModel(webApi, modelId, found.def);
-  const userPrompt = formatMessagesForBrowserPrompt(body.messages ?? []);
+  const userPrompt = lastUserPromptForBrowserInput(body.messages ?? []);
+  if (shouldPreferBrowserChat(webApi) && !userPrompt.trim()) {
+    throw new ChatGatewayError(400, "需要至少一条 user 消息，且去掉元数据后内容非空。");
+  }
   const browserFirst = tryCreateBrowserPiEventStream({
     webApi,
     credential,

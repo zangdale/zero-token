@@ -50,6 +50,8 @@ export function createClaudeWebStreamFn(cookieOrJson: string): StreamFn {
 
         // Build prompt based on conversation state
         let prompt = "";
+        const isToolResultR = (r: string | undefined) => (r || "").toLowerCase() === "toolresult";
+        const isUserRoleR = (r: string | undefined) => (r || "").toLowerCase() === "user";
 
         if (!sessionId) {
           // First turn: aggregate all history including system prompt
@@ -65,10 +67,10 @@ export function createClaudeWebStreamFn(cookieOrJson: string): StreamFn {
           }
 
           for (const m of messages) {
-            const role = m.role === "user" || m.role === "toolResult" ? "User" : "Assistant";
+            const role = isUserRoleR(m.role as string) || isToolResultR(m.role as string) ? "User" : "Assistant";
             let content = "";
 
-            if (m.role === "toolResult") {
+            if (isToolResultR(m.role as string)) {
               const tr = m as unknown as ToolResultMessage;
               let resultText = "";
               if (Array.isArray(tr.content)) {
@@ -99,7 +101,7 @@ export function createClaudeWebStreamFn(cookieOrJson: string): StreamFn {
         } else {
           // Continuing turn: check if last message is toolResult or user
           const lastMsg = messages[messages.length - 1];
-          if (lastMsg?.role === "toolResult") {
+          if (isToolResultR(lastMsg?.role as string)) {
             const tr = lastMsg as unknown as ToolResultMessage;
             let resultText = "";
             if (Array.isArray(tr.content)) {
@@ -111,7 +113,9 @@ export function createClaudeWebStreamFn(cookieOrJson: string): StreamFn {
             }
             prompt = `\n<tool_response id="${tr.toolCallId}" name="${tr.toolName}">\n${resultText}\n</tool_response>\n\nPlease proceed based on this tool result.`;
           } else {
-            const lastUserMessage = [...messages].toReversed().find((m) => m.role === "user");
+            const lastUserMessage = [...messages]
+              .toReversed()
+              .find((m) => isUserRoleR(m.role as string));
             if (lastUserMessage) {
               if (typeof lastUserMessage.content === "string") {
                 prompt = lastUserMessage.content;
@@ -393,40 +397,71 @@ export function createClaudeWebStreamFn(cookieOrJson: string): StreamFn {
         };
 
         const processLine = (line: string) => {
-          if (!line || !line.startsWith("data:")) {
+          if (!line) {
             return;
           }
-
-          const dataStr = line.slice(5).trim();
+          if (!line.startsWith("data:") && !line.startsWith("data: ")) {
+            return;
+          }
+          // "data: " or "data:" 
+          const idx = line.indexOf("{");
+          const dataStr = (idx === -1 ? line.slice(5) : line.slice(idx)).trim();
           if (dataStr === "[DONE]" || !dataStr) {
             return;
           }
 
           try {
-            const data = JSON.parse(dataStr);
+            const data = JSON.parse(dataStr) as Record<string, unknown>;
 
-            // Extract conversation ID (if present)
-            if (data.sessionId) {
-              sessionMap.set(sessionKey, data.sessionId);
+            // 会话/对话 id（claude 可能用不同字段名）
+            const convId =
+              (data.sessionId as string | undefined) ||
+              (data.session_id as string | undefined) ||
+              (data.chat_conversation_id as string | undefined) ||
+              (data.conversationId as string | undefined);
+            if (convId && typeof convId === "string") {
+              sessionMap.set(sessionKey, convId);
             }
 
-            // Unified delta extraction:
-            // - Qwen-style: choices[0].delta.content / text / content / delta
-            // - Claude Web SSE: type === "content_block_delta" with delta.text
-            let delta: unknown =
-              data.choices?.[0]?.delta?.content ?? data.text ?? data.content ?? data.delta;
+            /** 从 claude.ai completion SSE 的一行 JSON 里取增量正文（事件名可在上一行，JSON 内无顶层 type） */
+            const pickTextDelta = (d: Record<string, unknown>): string | null => {
+              const a = (d.choices as { 0?: { delta?: { content?: unknown } } } | undefined)?.[0]
+                ?.delta?.content;
+              if (typeof a === "string" && a) {
+                return a;
+              }
+              if (typeof d.text === "string" && d.text) {
+                return d.text;
+              }
+              if (typeof d.content === "string" && d.content) {
+                return d.content;
+              }
+              if (typeof d.delta === "string" && d.delta) {
+                return d.delta;
+              }
+              // {"delta": { "type": "text_delta", "text": "…" } }（未必带顶层 "type": "content_block_delta"）
+              const bl = d.delta;
+              if (bl && typeof bl === "object" && bl !== null) {
+                const du = bl as { text?: string; type?: string };
+                if (typeof du.text === "string" && du.text) {
+                  const t = String(du.type || "");
+                  if (!t || t === "text_delta" || t === "text") {
+                    return du.text;
+                  }
+                }
+              }
+              if (d.type === "content_block_delta" && bl && typeof bl === "object" && bl !== null) {
+                const t = (bl as { text?: string }).text;
+                if (typeof t === "string" && t) {
+                  return t;
+                }
+              }
+              return null;
+            };
 
-            if (
-              (!delta || typeof delta !== "string") &&
-              data.type === "content_block_delta" &&
-              data.delta &&
-              typeof data.delta.text === "string"
-            ) {
-              delta = data.delta.text;
-            }
-
-            if (typeof delta === "string" && delta) {
-              pushDelta(delta);
+            const textDelta = pickTextDelta(data);
+            if (textDelta) {
+              pushDelta(textDelta);
             }
           } catch {
             // Ignore parse errors

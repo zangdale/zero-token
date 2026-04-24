@@ -24,10 +24,6 @@
 | 豆包 | `doubao-web` |
 | 小米 MiMo | `xiaomimo-web` |
 
-## 参考仓库
-
-本项目的提供方桥接、浏览器 CDP 等实现与 [openclaw-zero-token](https://github.com/linuxhsj/openclaw-zero-token) 同源思路：该仓库为含 **OpenClaw 插件边界** 的完整树；**zero-token** 则抽成独立网关，仅保留凭据聚合与 OpenAI 兼容层，便于在无 OpenClaw 进程时单独部署。上游更新、issue 与讨论也可参考该 GitHub 项目。
-
 ## 要求
 
 - **Node.js** ≥ 20
@@ -49,7 +45,10 @@ cd zero-token
 make install
 make chrome-debug
 make login-all
-PORT=3001 make start
+# 可选无头模式（需要先关闭 Chrome 浏览器）
+make chrome-debug-headless
+# 启动服务
+make start
 ```
 
 在**已开远程调试**的 Chrome 中打开目标站点并登录，然后执行（以 `chatgpt-web` 为例）：
@@ -87,6 +86,7 @@ Makefile 只是对 `pnpm` / 脚本的薄封装，可直接用等价命令：
 | `make typecheck` | `pnpm run typecheck` |
 | `make health` | `curl -sS "http://127.0.0.1:${PORT:-3000}/health"`（需服务已启动） |
 | `make chrome-debug` | `bash scripts/start-chrome-debug.sh`（可用 `CHROME_DEBUG_PORT`、`CHROME_USER_DATA_DIR` 覆盖默认调试端口与用户目录） |
+| `make chrome-debug-headless` | `bash scripts/start-chrome-debug.sh`（无头模式，仍暴露 CDP；登录/扫码可能需有界面时勿用） |
 
 也可在项目根目录用与脚本相同入口：`node --import tsx src/cli/login.ts <id|all>`、`node --import tsx src/server.ts`（启动前建议仍通过 `pnpm install` 安装依赖）。
 

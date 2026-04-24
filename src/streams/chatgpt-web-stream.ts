@@ -45,7 +45,9 @@ export function createChatGPTWebStreamFn(cookieOrJson: string): StreamFn {
         // Only send the last user message to avoid overwhelming the input.
         let prompt = "";
         {
-          const lastUserMessage = [...messages].toReversed().find((m) => m.role === "user");
+          const lastUserMessage = [...messages]
+            .toReversed()
+            .find((m) => (m.role || "").toLowerCase() === "user");
           if (lastUserMessage) {
             if (typeof lastUserMessage.content === "string") {
               prompt = lastUserMessage.content;

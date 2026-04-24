@@ -39,7 +39,8 @@ function finalMessage(api: string, model: string, text: string): AssistantMessag
 }
 
 /**
- * 默认：聊天走真实浏览器（CDP 连接已有 Chrome，在页面上键入并读 DOM）。设置 ZERO_TOKEN_CHAT_VIA_BROWSER=0 可关闭，仅走 Node 内流式 API。
+ * 是否需要在传入网关前对「无 user 正文」做 400 校验。chatgpt-web 走 createChatGPTWebStreamFn，不在此执行纯 DOM 路径。
+ * gemini / grok：默认（CDP）在页面上键入并读 DOM。ZERO_TOKEN_CHAT_VIA_BROWSER=0 可关闭，仅走 Node 内流式 API。
  */
 export function shouldPreferBrowserChat(webApi: string): boolean {
   if (process.env.ZERO_TOKEN_CHAT_VIA_BROWSER === "0") {
@@ -56,6 +57,12 @@ export function tryCreateBrowserPiEventStream(params: {
   signal?: AbortSignal;
 }): import("@mariozechner/pi-ai").AssistantMessageEventStream | null {
   if (!shouldPreferBrowserChat(params.webApi)) {
+    return null;
+  }
+
+  // chatgpt-web：以 createChatGPTWebStreamFn 为主——页内带 sentinel 的 fetch 到 /backend-api/conversation，
+  // 失败（如 403）时已在客户端内回退到 DOM。若在此直连 runBrowserDialog，会绕开该路径，常出现“参数/回复异常”。
+  if (params.webApi === "chatgpt-web") {
     return null;
   }
 
@@ -81,21 +88,7 @@ export function tryCreateBrowserPiEventStream(params: {
     };
 
     try {
-      if (webApi === "chatgpt-web") {
-        const { ChatGPTWebClientBrowser } = await import("../providers/chatgpt-web-client-browser.js");
-        const c = new ChatGPTWebClientBrowser(credential);
-        await c.init();
-        const finalText = await c.runBrowserDialog({
-          message: userPrompt,
-          signal,
-          onCumulativeText: onCumulative,
-        });
-        stream.push({
-          type: "done",
-          reason: "stop",
-          message: finalMessage(api, model, finalText),
-        } as AssistantMessageEvent);
-      } else if (webApi === "grok-web") {
+      if (webApi === "grok-web") {
         const { GrokWebClientBrowser } = await import("../providers/grok-web-client-browser.js");
         const o = JSON.parse(credential) as { cookie: string; userAgent: string };
         const c = new GrokWebClientBrowser(o);

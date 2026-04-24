@@ -151,13 +151,21 @@ export class ClaudeWebClientBrowser {
       return {
         name: name.trim(),
         value: valueParts.join("=").trim(),
-        domain: ".claude.ai",
-        path: "/",
+        url: "https://claude.ai/",
       };
     });
 
     if (this.browser) {
-      await this.browser.addCookies(cookies);
+      const valid = cookies.filter((c) => c.name.length > 0);
+      try {
+        if (valid.length > 0) {
+          await this.browser.addCookies(valid);
+        }
+      } catch (e) {
+        console.warn(
+          `[Claude Web Browser] addCookies: ${e instanceof Error ? e.message : String(e)} (页面可能已带 session)`,
+        );
+      }
     }
 
     if (!this.browser || !this.page) {
@@ -177,6 +185,7 @@ export class ClaudeWebClientBrowser {
 
       const response = await page.evaluate(
         async ({ baseUrl, deviceId }) => {
+          const __name = (fn: unknown) => fn;
           const res = await fetch(`${baseUrl}/organizations`, {
             headers: {
               Accept: "application/json",
@@ -219,6 +228,7 @@ export class ClaudeWebClientBrowser {
     const convUuid = crypto.randomUUID();
     const response = await page.evaluate(
       async ({ url, deviceId, convUuid }) => {
+        const __name = (fn: unknown) => fn;
         const res = await fetch(url, {
           method: "POST",
           headers: {
@@ -314,6 +324,7 @@ export class ClaudeWebClientBrowser {
     // Use page.evaluate to make the request in browser context (bypasses Cloudflare)
     const responseData = await page.evaluate(
       async ({ url, body, deviceId }) => {
+        const __name = (fn: unknown) => fn;
         const res = await fetch(url, {
           method: "POST",
           headers: {

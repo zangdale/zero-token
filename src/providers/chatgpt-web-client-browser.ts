@@ -131,8 +131,8 @@ export class ChatGPTWebClientBrowser {
         return {
           name: name?.trim() ?? "",
           value: valueParts.join("=").trim(),
-          domain: ".chatgpt.com",
-          path: "/",
+          // 使用 url 而非 domain+path，避免 CDP setCookies 报 Invalid cookie fields
+          url: "https://chatgpt.com/",
         };
       });
       const cookies = rawCookies.filter((c) => c.name.length > 0);
@@ -222,6 +222,8 @@ export class ChatGPTWebClientBrowser {
       await new Promise((r) => setTimeout(r, pollIntervalMs));
 
       const result = await page.evaluate(() => {
+        // tsx/esbuild 在序列化到页内时可能生成 __name(fn, "…")，浏览器侧无此 helper
+        const __name = (fn: unknown) => fn;
         const clean = (t: string) => t.replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
         const els = document.querySelectorAll(
           'div[data-message-author-role="assistant"], .agent-turn [data-message-author-role="assistant"], [class*="markdown"], [class*="assistant"]',
@@ -326,6 +328,7 @@ export class ChatGPTWebClientBrowser {
 
     const responseData = await page.evaluate(
       async ({ body, pageUrl }) => {
+        const __name = (fn: unknown) => fn;
         const baseHeaders = (accessToken: string | undefined, deviceId: string) => ({
           "Content-Type": "application/json",
           Accept: "text/event-stream",
@@ -338,7 +341,7 @@ export class ChatGPTWebClientBrowser {
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         });
 
-        async function warmupSentinel(accessToken: string | undefined, deviceId: string) {
+        const warmupSentinel = async (accessToken: string | undefined, deviceId: string) => {
           const h = baseHeaders(accessToken, deviceId);
           await fetch("https://chatgpt.com/backend-api/conversation/init", {
             method: "POST",
@@ -358,14 +361,14 @@ export class ChatGPTWebClientBrowser {
             body: "{}",
             credentials: "include",
           }).catch(() => {});
-        }
+        };
 
-        async function getSession() {
+        const getSession = async () => {
           const r = await fetch("https://chatgpt.com/api/auth/session", { credentials: "include" });
           return r.ok ? r.json() : null;
-        }
+        };
 
-        async function tryFetchWithSentinel(accessToken: string | undefined, deviceId: string) {
+        const tryFetchWithSentinel = async (accessToken: string | undefined, deviceId: string) => {
           // Warm up sentinel endpoints before the real request
           await warmupSentinel(accessToken, deviceId);
           const scripts = Array.from(document.scripts);
@@ -415,7 +418,7 @@ export class ChatGPTWebClientBrowser {
             const msg = e instanceof Error ? e.message : String(e);
             return { error: `Sentinel token failed: ${msg}` };
           }
-        }
+        };
 
         const session = await getSession();
         const accessToken = session?.accessToken;
