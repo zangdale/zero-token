@@ -44,7 +44,12 @@
 ## 快速开始
 
 ```bash
+git clone https://github.com/linuxhsj/zero-token.git
+cd zero-token
 make install
+make chrome-debug
+make login-all
+PORT=3001 make start
 ```
 
 在**已开远程调试**的 Chrome 中打开目标站点并登录，然后执行（以 `chatgpt-web` 为例）：

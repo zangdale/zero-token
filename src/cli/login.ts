@@ -176,8 +176,17 @@ async function loginAll(): Promise<number> {
   return failed.length > 0 ? 1 : 0;
 }
 
+function firstCliArg(): string {
+  // pnpm/npm `run script -- foo` 会在子进程里再插入一个 `--`（见实际命令: node ... login.ts -- foo）
+  const args = process.argv.slice(2);
+  while (args[0] === "--") {
+    args.shift();
+  }
+  return (args[0] || "").trim();
+}
+
 async function main() {
-  const p = (process.argv[2] || "").trim();
+  const p = firstCliArg();
   if (!p || p === "-h" || p === "--help") {
     console.log(`Usage: npx tsx src/cli/login.ts <web-api|all>\n`);
     console.log(`  all              按顺序尝试登录全部平台（单站失败不中断）`);
