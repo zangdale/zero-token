@@ -7,6 +7,7 @@
  */
 
 import { toolDefsJson } from "./web-tool-defs.js";
+import type { OpenAIFunctionToolItem } from "../gateway/openai-tool-bridge.js";
 
 const TOOL_DEFS = toolDefsJson();
 
@@ -18,16 +19,8 @@ const TOOL_EXAMPLE = `Example: to add 1 to number 5, return:
 \`\`\`
 (plus_one is just an example, not a real tool)`;
 
-const EN_TEMPLATE = `Tools: ${TOOL_DEFS}
-
-${TOOL_EXAMPLE}
-
-Your actual tools are listed above. To use one, reply ONLY with the tool_json block.
-No tool needed? Answer directly.
-
-`;
-
-const EN_STRICT_TEMPLATE = `Tools: ${TOOL_DEFS}
+function enStrictBody(toolDefs: string) {
+  return `Tools: ${toolDefs}
 
 ${TOOL_EXAMPLE}
 
@@ -35,8 +28,19 @@ Your actual tools are listed above. To use one, reply ONLY with the tool_json bl
 No tool needed? Answer directly.
 
 `;
+}
+function enBody(toolDefs: string) {
+  return `Tools: ${toolDefs}
 
-const CN_TEMPLATE = `工具: ${TOOL_DEFS}
+${TOOL_EXAMPLE}
+
+Your actual tools are listed above. To use one, reply ONLY with the tool_json block.
+No tool needed? Answer directly.
+
+`;
+}
+function cnBody(toolDefs: string) {
+  return `工具: ${toolDefs}
 
 示例: 要给数字5加1，返回:
 \`\`\`tool_json
@@ -44,9 +48,14 @@ const CN_TEMPLATE = `工具: ${TOOL_DEFS}
 \`\`\`
 (plus_one仅为示例，非真实工具)
 
-你的真实工具见上方列表。需要时只回复tool_json块。不需要则直接回答。
+ 你的真实工具见上方列表。需要时只回复tool_json块。不需要则直接回答。
 
 `;
+}
+
+const EN_TEMPLATE = enBody(TOOL_DEFS);
+const EN_STRICT_TEMPLATE = enStrictBody(TOOL_DEFS);
+const CN_TEMPLATE = cnBody(TOOL_DEFS);
 
 /** No web models skip prompt injection — web interfaces don't pass native tools.
  *  Even DeepSeek/Claude/GLM need prompt injection when accessed via browser. */
@@ -80,6 +89,30 @@ export function getToolPrompt(api: string): string {
     return CN_TEMPLATE;
   }
   return EN_TEMPLATE;
+}
+
+function openAiFunctionToolsToDefString(tools: OpenAIFunctionToolItem[]): string {
+  return JSON.stringify(
+    tools
+      .filter((t) => t.type === "function" && t.function?.name)
+      .map((t) => ({
+        name: t.function.name,
+        description: t.function.description ?? "",
+        parameters: t.function.parameters ?? {},
+      })),
+  );
+}
+
+/** 使用客户端 `POST` 里的 `tools` 列表拼 prompt（与内置 `WEB_CORE_TOOLS` 同格式要求）。 */
+export function getToolPromptForOpenAIFunctions(api: string, tools: OpenAIFunctionToolItem[]): string {
+  const defs = openAiFunctionToolsToDefString(tools);
+  if (STRICT_MODELS.has(api)) {
+    return enStrictBody(defs);
+  }
+  if (CN_MODELS.has(api)) {
+    return cnBody(defs);
+  }
+  return enBody(defs);
 }
 
 /** Format tool result for feedback to the model */

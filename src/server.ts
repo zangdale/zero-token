@@ -44,6 +44,13 @@ app.post("/v1/chat/completions", async (c) => {
     stream?: boolean;
     temperature?: number;
     max_tokens?: number;
+    user?: string;
+    /** OpenAI-style function tools;网关会注入 tool_json 协议并与上游流式结果对齐 */
+    tools?: Array<{
+      type: "function";
+      function: { name: string; description?: string; parameters?: Record<string, unknown> };
+    }>;
+    tool_choice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
   };
   try {
     body = (await c.req.json()) as typeof body;
@@ -62,6 +69,9 @@ app.post("/v1/chat/completions", async (c) => {
         stream: streamMode,
         temperature: body.temperature,
         max_tokens: body.max_tokens,
+        user: body.user,
+        tools: body.tools,
+        tool_choice: body.tool_choice,
       },
       c.req.raw.signal,
     );

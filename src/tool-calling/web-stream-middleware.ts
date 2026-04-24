@@ -18,7 +18,12 @@ import {
 } from "@mariozechner/pi-ai";
 import { stripInboundMeta } from "../streams/strip-inbound-meta.js";
 import { extractToolCall } from "./web-tool-parser.js";
-import { shouldInjectToolPrompt, getToolPrompt } from "./web-tool-prompt.js";
+import {
+  shouldInjectToolPrompt,
+  getToolPrompt,
+  getToolPromptForOpenAIFunctions,
+} from "./web-tool-prompt.js";
+import type { OpenAIFunctionToolItem, ZeroTokenContextFields } from "../gateway/openai-tool-bridge.js";
 
 /**
  * Quick keyword check: does this message likely need tool use?
@@ -152,14 +157,23 @@ export function wrapWithToolCalling(streamFn: StreamFn, api: string): StreamFn {
       return streamFn(model, context, options);
     }
 
-    // Only inject tool prompt when the message likely needs tool use.
+    // Only inject tool prompt when the message likely needs tool use, unless the client
+    // passed `tools` in the API body (OpenAI) — then always consider injection.
     // This reduces ban risk by keeping most messages short and natural.
     const hasAgentTools = (context.tools?.length ?? 0) > 0;
+    const x = context as import("@mariozechner/pi-ai").Context & ZeroTokenContextFields;
+    const forceFromApi = x.zeroTokenForceToolPrompt === true;
+    const customFnTools: OpenAIFunctionToolItem[] | undefined = x.zeroTokenOpenAITools;
     const injectTools =
-      shouldInjectToolPrompt(api) && hasAgentTools && needsToolInjection(userMessage);
+      shouldInjectToolPrompt(api) && hasAgentTools && (forceFromApi || needsToolInjection(userMessage));
 
     // Build the prompt: tool prompt (if applicable) + user message
-    const prompt = injectTools ? getToolPrompt(api) + userMessage : userMessage;
+    const toolPrefix = injectTools
+      ? customFnTools?.length
+        ? getToolPromptForOpenAIFunctions(api, customFnTools)
+        : getToolPrompt(api)
+      : "";
+    const prompt = injectTools ? toolPrefix + userMessage : userMessage;
 
     console.log(
       `[WebStreamMiddleware] api=${api} injectTools=${injectTools} promptLen=${prompt.length} userMsgLen=${userMessage.length}`,

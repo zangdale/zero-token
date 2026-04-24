@@ -193,12 +193,15 @@ export class QwenCNWebClientBrowser {
 
     const model = params.model || "Qwen3.5-Plus";
     const sessionId =
-      params.sessionId ||
-      Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+      typeof params.sessionId === "string" && params.sessionId.length > 0
+        ? params.sessionId
+        : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
 
     console.log(`[Qwen CN Web Browser] Sending message`);
     console.log(`[Qwen CN Web Browser] Model: ${model}`);
-    console.log(`[Qwen CN Web Browser] Session ID: ${sessionId}`);
+    console.log(
+      `[Qwen CN Web Browser] Session ID: ${sessionId}${params.sessionId ? " (reused from gateway)" : " (new, caller should persist)"}`,
+    );
 
     const timestamp = Date.now();
     const nonce = Math.random().toString(36).slice(2);

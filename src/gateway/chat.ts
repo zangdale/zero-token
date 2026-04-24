@@ -1,23 +1,16 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type {
-  Api,
-  AssistantMessage,
-  AssistantMessageEvent,
-  Context,
-  Model,
-  UserMessage,
-  AssistantMessage as PiAssistantMessage,
-} from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model, ToolCall } from "@mariozechner/pi-ai";
 import { getWebStreamFactory } from "../streams/web-stream-factories.js";
 import { loadCredentials } from "../credentials.js";
 import { findModelDefinition, parseCompositeModelId } from "../catalog.js";
 import { shouldPreferBrowserChat, tryCreateBrowserPiEventStream } from "./browser-pi-bridge.js";
+import { extractText } from "./message-text.js";
 import { stripInboundMeta } from "../streams/strip-inbound-meta.js";
-
-type OpenAIChatMessage = {
-  role: string;
-  content?: unknown;
-};
+import {
+  type OpenAIFunctionToolItem,
+  type OpenAIChatMessage,
+  buildPiContextFromOpenAIBody,
+} from "./openai-tool-bridge.js";
 
 type ChatCompletionsBody = {
   model: string;
@@ -25,37 +18,21 @@ type ChatCompletionsBody = {
   stream?: boolean;
   temperature?: number;
   max_tokens?: number;
+  /** OpenAI 可选：同一 `user` 在部分提供方（如 `qwen-cn-web`）内复用浏览器侧同一会话 */
+  user?: string;
+  /** OpenAI Chat Completions: `tools` + `tool_choice` */
+  tools?: OpenAIFunctionToolItem[];
+  tool_choice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 };
 
 function isUserRole(role: string | undefined): boolean {
   return (role || "").toLowerCase() === "user";
 }
 
-function extractText(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return content
-      .map((p) => {
-        if (p && typeof p === "object" && "text" in p && typeof (p as { text?: string }).text === "string") {
-          return (p as { text: string }).text;
-        }
-        return "";
-      })
-      .join("");
-  }
-  if (content && typeof content === "object" && "text" in (content as object)) {
-    return String((content as { text: unknown }).text ?? "");
-  }
-  return String(content ?? "");
-}
-
 /**
  * 浏览器里仅模拟「当前这一条」发入输入框。与 `createChatGPTWebStreamFn` 一致，只取**最后一条 user**，
  * 经 stripInboundMeta；若再拼多轮为 `user:\\n...\\n\\nuser:`，会整段被键入，出现 "user: 你好 user: ..." 等异常。
  */
-
 function lastUserPromptForBrowserInput(messages: OpenAIChatMessage[]): string {
   const last = [...messages].toReversed().find((m) => isUserRole(m.role));
   if (!last) {
@@ -64,52 +41,11 @@ function lastUserPromptForBrowserInput(messages: OpenAIChatMessage[]): string {
   return stripInboundMeta(extractText(last.content).trim());
 }
 
-function openaiMessagesToContext(messages: OpenAIChatMessage[]): Context {
-  const systemBits: string[] = [];
-  const out: Context["messages"] = [];
-  let tick = Date.now();
-  for (const m of messages) {
-    if (m.role === "system") {
-      systemBits.push(extractText(m.content));
-      continue;
-    }
-    if (isUserRole(m.role)) {
-      const text = extractText(m.content);
-      const msg: UserMessage = {
-        role: "user",
-        content: [{ type: "text", text }],
-        timestamp: tick++,
-      };
-      out.push(msg);
-    } else if (m.role === "assistant") {
-      const text = extractText(m.content);
-      const stub: PiAssistantMessage = {
-        role: "assistant",
-        content: [{ type: "text", text }],
-        api: "openai-completions" as Api,
-        provider: "openai",
-        model: "history",
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: "stop",
-        timestamp: tick++,
-      };
-      out.push(stub);
-    }
-  }
-  return {
-    systemPrompt: systemBits.join("\n\n").trim() || undefined,
-    messages: out,
-  };
-}
-
-function buildModel(webApi: string, modelId: string, def: { name: string; reasoning: boolean; contextWindow: number; maxTokens: number }): Model<Api> {
+function buildModel(
+  webApi: string,
+  modelId: string,
+  def: { name: string; reasoning: boolean; contextWindow: number; maxTokens: number },
+): Model<Api> {
   return {
     id: modelId,
     name: def.name,
@@ -130,6 +66,13 @@ export class ChatGatewayError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function mergeContextWithFlags(
+  context: Context,
+  extra: { zeroTokenOpenAITools?: unknown; zeroTokenForceToolPrompt?: boolean; user?: string },
+): Context {
+  return Object.assign(context, extra) as Context;
 }
 
 export async function runChatCompletion(body: ChatCompletionsBody, signal?: AbortSignal) {
@@ -154,6 +97,13 @@ export async function runChatCompletion(body: ChatCompletionsBody, signal?: Abor
     );
   }
   const model = buildModel(webApi, modelId, found.def);
+  const { context, zero } = buildPiContextFromOpenAIBody({
+    messages: body.messages ?? [],
+    tools: body.tools,
+    tool_choice: body.tool_choice,
+  });
+  const merged = mergeContextWithFlags(context, { ...zero, ...(body.user?.trim() ? { user: body.user.trim() } : {}) });
+
   const userPrompt = lastUserPromptForBrowserInput(body.messages ?? []);
   if (shouldPreferBrowserChat(webApi) && !userPrompt.trim()) {
     throw new ChatGatewayError(400, "需要至少一条 user 消息，且去掉元数据后内容非空。");
@@ -166,6 +116,12 @@ export async function runChatCompletion(body: ChatCompletionsBody, signal?: Abor
     signal,
   });
   if (browserFirst) {
+    if (Array.isArray(body.tools) && body.tools.length > 0) {
+      throw new ChatGatewayError(
+        400,
+        "当前提供方在浏览器内对话路径下（gemini-web / grok 的默认 CDP 等）暂不支持 `tools`；可设置环境变量 ZERO_TOKEN_CHAT_VIA_BROWSER=0 后重试。",
+      );
+    }
     let eventStream: AsyncIterable<AssistantMessageEvent> = browserFirst;
     if (eventStream && typeof (eventStream as { then?: unknown }).then === "function") {
       const awaited = (await (eventStream as unknown as Promise<AsyncIterable<AssistantMessageEvent>>)) as AsyncIterable<AssistantMessageEvent>;
@@ -178,8 +134,7 @@ export async function runChatCompletion(body: ChatCompletionsBody, signal?: Abor
     throw new ChatGatewayError(500, `No stream factory for api ${webApi}`);
   }
   const streamFn = factory(credential);
-  const context = openaiMessagesToContext(body.messages ?? []);
-  let eventStream: AsyncIterable<AssistantMessageEvent> = streamFn(model, context, {
+  let eventStream: AsyncIterable<AssistantMessageEvent> = streamFn(model, merged, {
     signal,
     maxTokens: body.max_tokens,
     temperature: body.temperature,
@@ -206,6 +161,27 @@ function assistantMessageToText(m: AssistantMessage): string {
   return t;
 }
 
+function toolCallsOpenAIFormat(m: AssistantMessage) {
+  const out: { id: string; type: "function"; function: { name: string; arguments: string } }[] = [];
+  if (!m.content || !Array.isArray(m.content)) {
+    return out;
+  }
+  for (const part of m.content) {
+    if (part.type === "toolCall") {
+      const p = part as ToolCall;
+      out.push({
+        id: p.id,
+        type: "function" as const,
+        function: {
+          name: p.name,
+          arguments: JSON.stringify(p.arguments ?? {}),
+        },
+      });
+    }
+  }
+  return out;
+}
+
 export async function collectNonStreamingText(
   eventStream: AsyncIterable<AssistantMessageEvent>,
   meta: { webApi: string; modelId: string },
@@ -218,6 +194,27 @@ export async function collectNonStreamingText(
     }
     if (ev.type === "done") {
       const text = assistantMessageToText(ev.message);
+      const toolCalls = toolCallsOpenAIFormat(ev.message);
+      if (toolCalls.length > 0) {
+        return {
+          id,
+          object: "chat.completion" as const,
+          created: Math.floor(Date.now() / 1000),
+          model: `${meta.webApi}/${meta.modelId}`,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant" as const,
+                content: text.length > 0 ? text : null,
+                tool_calls: toolCalls,
+              },
+              finish_reason: "tool_calls" as const,
+            },
+          ],
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        };
+      }
       return {
         id,
         object: "chat.completion" as const,
@@ -278,12 +275,48 @@ export async function* openAIStreamingChunks(
         choices: [
           {
             index: 0,
-            delta: { content: `〈thinking〉${ev.delta}`, role: n === 1 ? ("assistant" as const) : undefined },
+            delta: {
+              content: `〈thinking〉${ev.delta}`,
+              role: n === 1 ? ("assistant" as const) : undefined,
+            },
             finish_reason: null,
           },
         ],
       };
     } else if (ev.type === "done") {
+      const tcalls = toolCallsOpenAIFormat(ev.message);
+      if (tcalls.length > 0) {
+        n++;
+        yield {
+          id,
+          object: "chat.completion.chunk" as const,
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: tcalls.map((tc, i) => ({
+                  index: i,
+                  id: tc.id,
+                  type: "function" as const,
+                  function: { name: tc.function.name, arguments: tc.function.arguments },
+                })),
+                role: n === 1 ? ("assistant" as const) : undefined,
+              },
+              finish_reason: null,
+            },
+          ],
+        };
+        yield {
+          id,
+          object: "chat.completion.chunk" as const,
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" as const }],
+        };
+        return;
+      }
       yield {
         id,
         object: "chat.completion.chunk" as const,

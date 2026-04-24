@@ -2,6 +2,7 @@ import type { StreamFn } from "@mariozechner/pi-agent-core";
 import {
   createAssistantMessageEventStream,
   type AssistantMessage,
+  type Context,
   type TextContent,
   type ThinkingContent,
   type ToolCall,
@@ -12,7 +13,73 @@ import {
 } from "../providers/qwen-cn-web-client-browser.js";
 import { stripInboundMeta } from "./strip-inbound-meta.js";
 
-const sessionMap = new Map<string, string>();
+/** 按 OpenAI 请求体 `user` 隔离；未传时共用 `default`，保证千问侧同一 `session_id` 与可解析时的 `parent_req` 多轮。 */
+type QwenCNBrowserSession = {
+  sessionId: string;
+  lastParentReqId: string;
+  /** 本键下已跑过至少一次完整流式，后续优先走多轮/continue（视是否有 parent 而定） */
+  hadResponse: boolean;
+};
+
+const qwenCNBrowserSessionByKey = new Map<string, QwenCNBrowserSession>();
+
+function newQwenSessionId(): string {
+  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+}
+
+function deepFindSessionId(data: unknown, d = 0): string | undefined {
+  if (d > 14) return;
+  if (!data || typeof data !== "object") return;
+  const o = data as Record<string, unknown>;
+  for (const k of ["sessionId", "session_id", "session", "sessionid"]) {
+    const v = o[k];
+    if (typeof v === "string" && v.length > 4) return v;
+  }
+  for (const v of Object.values(o)) {
+    if (v && typeof v === "object") {
+      const r = deepFindSessionId(v, d + 1);
+      if (r) return r;
+    }
+  }
+  return;
+}
+
+function deepFindReqId(data: unknown, d = 0): string | undefined {
+  if (d > 16) return;
+  if (!data) return;
+  if (Array.isArray(data)) {
+    for (let i = data.length - 1; i >= 0; i--) {
+      const r = deepFindReqId(data[i], d + 1);
+      if (r) return r;
+    }
+    return;
+  }
+  if (typeof data !== "object") return;
+  const o = data as Record<string, unknown>;
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v === "string" && (k === "req_id" || k === "reqId" || (k === "id" && v.startsWith("req-")))) {
+      if (v !== "0" && v.length) return v;
+    }
+  }
+  for (const v of Object.values(o)) {
+    if (v && typeof v === "object") {
+      const r = deepFindReqId(v, d + 1);
+      if (r) return r;
+    }
+  }
+  return;
+}
+
+function patchSessionFromSseData(st: QwenCNBrowserSession, data: unknown) {
+  const sid = deepFindSessionId(data) ?? (data && typeof data === "object" && "data" in (data as object) ? deepFindSessionId((data as { data: unknown }).data) : undefined);
+  if (typeof sid === "string" && sid.length > 4) {
+    st.sessionId = sid;
+  }
+  const pr = deepFindReqId(data) ?? (data && typeof data === "object" && "data" in (data as object) ? deepFindReqId((data as { data: unknown }).data) : undefined);
+  if (typeof pr === "string" && pr && pr !== "0") {
+    st.lastParentReqId = pr;
+  }
+}
 
 export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
   let options: QwenCNWebClientOptions;
@@ -31,8 +98,17 @@ export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
       try {
         await client.init();
 
-        const sessionKey = (context as unknown as { sessionId?: string }).sessionId || "default";
-        let sessionId = sessionMap.get(sessionKey);
+        const ext = context as Context & { user?: string; sessionId?: string };
+        const sessionKey = ext.user?.trim() || ext.sessionId || "default";
+
+        if (!qwenCNBrowserSessionByKey.has(sessionKey)) {
+          qwenCNBrowserSessionByKey.set(sessionKey, {
+            sessionId: newQwenSessionId(),
+            lastParentReqId: "0",
+            hadResponse: false,
+          });
+        }
+        const st = qwenCNBrowserSessionByKey.get(sessionKey)!;
 
         const messages = context.messages || [];
 
@@ -56,12 +132,15 @@ export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
           throw new Error("No message found to send to Qwen API");
         }
 
-        console.log(`[QwenCNWebStream] Starting run for session: ${sessionKey}`);
-        console.log(`[QwenCNWebStream] Conversation ID: ${sessionId || "new"}`);
+        const isContinue =
+          st.hadResponse && st.lastParentReqId && st.lastParentReqId !== "0";
+
+        console.log(`[QwenCNWebStream] sessionKey=${sessionKey} qwenSessionId=${st.sessionId.slice(0, 8)}... continue=${isContinue} parentReq=${st.lastParentReqId}`);
         console.log(`[QwenCNWebStream] Prompt length: ${prompt.length}`);
 
         const responseStream = await client.chatCompletions({
-          sessionId,
+          sessionId: st.sessionId,
+          parentMessageId: isContinue ? st.lastParentReqId : undefined,
           message: prompt,
           model: model.id,
           signal: streamOptions?.signal,
@@ -74,6 +153,7 @@ export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
         const reader = responseStream.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let rawSseAccum = "";
 
         const indexMap = new Map<string, number>();
         let nextIndex = 0;
@@ -338,11 +418,7 @@ export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
 
           try {
             const data = JSON.parse(dataStr);
-
-            // Extract conversation ID
-            if (data.sessionId) {
-              sessionMap.set(sessionKey, data.sessionId);
-            }
+            patchSessionFromSseData(st, data);
 
             // Extract content delta - Qwen v2 uses choices[0].delta.content
             // Qwen CN Web returns different structure
@@ -415,6 +491,7 @@ export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
           }
 
           const chunk = decoder.decode(value, { stream: true });
+          rawSseAccum += chunk;
           const combined = buffer + chunk;
           const parts = combined.split("\n");
           buffer = parts.pop() || "";
@@ -423,6 +500,20 @@ export function createQwenCNWebStreamFn(cookieOrJson: string): StreamFn {
             processLine(part.trim());
           }
         }
+
+        if (rawSseAccum.length > 0) {
+          for (const line of rawSseAccum.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const raw = line.slice(5).trim();
+            if (!raw || raw === "[DONE]") continue;
+            try {
+              patchSessionFromSseData(st, JSON.parse(raw) as unknown);
+            } catch {
+              // ignore
+            }
+          }
+        }
+        st.hadResponse = true;
 
         // Flush remaining tag buffer
         if (tagBuffer) {

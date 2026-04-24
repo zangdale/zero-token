@@ -152,6 +152,8 @@ make login-all
 
 **模型 id**：必须为 `提供方/模型` 形式（与 `GET /v1/models` 中每条 `id` 一致），例如 `grok-web/grok-2`、`chatgpt-web/gpt-4`、`deepseek-web/deepseek-chat`。
 
+**`user` 字段**（与 OpenAI 相同，可选）：对 `qwen-cn-web`，网关会按**同一 `user` 同一会话**复用千问浏览器/接口侧的 `session_id`（多轮在能解析到 `req_id` / `parent_req` 时还会带上续写）。不填时进程内会落到默认键，所有未带 `user` 的客户端会共享同一条 Qwen 会话，建议客户端显式设稳定 id。
+
 **非流式**（`stream` 省略或 `false`）：
 
 ```bash
@@ -178,6 +180,8 @@ curl -N -sS "http://127.0.0.1:3000/v1/chat/completions" \
     "stream": true
   }'
 ```
+
+**工具调用（`tools`）**：请求体可带与 OpenAI Chat Completions 相同形态的 `tools`（仅 `type: "function"`），`parameters` 为 JSON Schema 对象。网关将工具定义写入对上游网页模型的 `tool_json` 提示，并把模型在回复中给出的 fenced `tool_json` 代码块解析为一次工具调用。响应中助手消息为 OpenAI 兼容的 `tool_calls`（非流式为完整 JSON；流式在结束前输出带 `tool_calls` 的 delta 与 `finish_reason: "tool_calls"`）。多轮时请在 `messages` 中依序带上 `assistant` 的 `tool_calls` 与 `role: "tool"` 的工具结果。`tool_choice: "none"` 可关闭本次请求的工具。`perplexity-web` / `doubao-web` 不注入工具提示。若使用 **浏览器内对话** 路径（`gemini-web` / `grok` 默认的 CDP，且未将 `ZERO_TOKEN_CHAT_VIA_BROWSER=0`），**不支持** `tools`，需改为纯流式后重试；`chatgpt-web` 默认走本仓库流式，可配合 `tools`（仍受各站风控与模型能力限制）。
 
 **拉取模型列表**：
 
