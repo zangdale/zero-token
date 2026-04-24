@@ -1,0 +1,29 @@
+{
+  "name": "zero-token",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "description": "Web login → token store + OpenAI-compatible Chat API (no OpenClaw runtime)",
+  "scripts": {
+    "start": "node --import tsx src/server.ts",
+    "login": "node --import tsx src/cli/login.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "@mariozechner/pi-agent-core": "0.57.1",
+    "@mariozechner/pi-ai": "0.57.1",
+    "hono": "^4.7.0",
+    "playwright-core": "^1.50.0",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
