@@ -25,7 +25,6 @@ export class DoubaoWebClientBrowser {
   private browser: BrowserContext | null = null;
   private page: Page | null = null;
   private running: { cdpPort: number; proc?: unknown } | null = null;
-  private conversationId: string | null = null; // 复用对话 ID
 
   constructor(options: DoubaoWebClientOptions | string) {
     if (typeof options === "string") {
@@ -172,19 +171,43 @@ export class DoubaoWebClientBrowser {
     );
   }
 
+  private extractConversationIdFromSseBody(data: string | undefined): string | null {
+    if (!data) {
+      return null;
+    }
+    for (const line of data.split("\n")) {
+      if (line.startsWith("data:") && line.includes("conversation_id")) {
+        const m = line.match(/"conversation_id"\s*:\s*"([^"]+)"/);
+        if (m?.[1] && m[1] !== "0" && m[1].length > 0) {
+          return m[1];
+        }
+      }
+    }
+    return null;
+  }
+
   async chatCompletions(params: {
     messages: Array<{ role: string; content: string }>;
     model?: string;
     signal?: AbortSignal;
-  }): Promise<ReadableStream<Uint8Array>> {
+    /**
+     * 由网关 `doubao-web-stream` 按 OpenAI `user` 分桶传入；有值则同一会话多轮，不传则新会话
+     */
+    conversationId?: string;
+  }): Promise<{ stream: ReadableStream<Uint8Array>; conversationId: string | null }> {
     const { page } = await this.ensureBrowser();
 
     const modelId = params.model || "doubao-seed-2.0";
     const text = this.mergeMessagesForSamantha(params.messages);
+    const existingId =
+      typeof params.conversationId === "string" && params.conversationId.length > 0 && params.conversationId !== "0"
+        ? params.conversationId
+        : null;
 
     console.log(`[Doubao Web Browser] Sending message`);
     console.log(`[Doubao Web Browser] Model: ${modelId}`);
     console.log(`[Doubao Web Browser] Messages count: ${params.messages.length}`);
+    console.log(`[Doubao Web Browser] Reusing conversation_id: ${existingId ?? "new"}`);
 
     // 构建请求体
     const requestBody = {
@@ -199,14 +222,14 @@ export class DoubaoWebClientBrowser {
       completion_option: {
         is_regen: false,
         with_suggest: true,
-        need_create_conversation: !this.conversationId, // 如果已有 conversation_id 则不复创建
+        need_create_conversation: !existingId,
         launch_stage: 1,
         is_replace: false,
         is_delete: false,
         message_from: 0,
         event_id: "0",
       },
-      conversation_id: this.conversationId || "0", // 复用已有的 conversation_id
+      conversation_id: existingId || "0",
       local_conversation_id: `local_16${Date.now().toString().slice(-14)}`,
       local_message_id: crypto.randomUUID(),
     };
@@ -291,24 +314,13 @@ export class DoubaoWebClientBrowser {
     );
     console.log(`[Doubao Web Browser] Response data preview: ${responseData.data?.slice(0, 500)}`);
 
-    // 从响应中提取 conversation_id
-    if (!this.conversationId && responseData.data) {
-      try {
-        // 查找 data 中的 conversation_id（可能在各个事件的 event_data 中）
-        const lines = responseData.data.split("\n");
-        for (const line of lines) {
-          if (line.startsWith("data:") && line.includes("conversation_id")) {
-            const match = line.match(/"conversation_id"\s*:\s*"([^"]+)"/);
-            if (match && match[1] && match[1] !== "0") {
-              this.conversationId = match[1];
-              console.log(`[Doubao Web Browser] Captured conversation_id: ${this.conversationId}`);
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        console.log(`[Doubao Web Browser] Could not extract conversation_id: ${String(e)}`);
-      }
+    const extracted = this.extractConversationIdFromSseBody(responseData.data);
+    const resolved = extracted || existingId || null;
+    if (extracted) {
+      console.log(`[Doubao Web Browser] Captured conversation_id: ${extracted}`);
+    }
+    if (resolved) {
+      console.log(`[Doubao Web Browser] Resolved session conversation_id: ${resolved}`);
     }
 
     // 转换为 ReadableStream，预先按行切分
@@ -328,7 +340,7 @@ export class DoubaoWebClientBrowser {
       },
     });
 
-    return stream;
+    return { stream, conversationId: resolved };
   }
 
   async close() {

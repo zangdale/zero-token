@@ -62,7 +62,7 @@ const CN_TEMPLATE = cnBody(TOOL_DEFS);
 const NATIVE_TOOL_MODELS = new Set<string>();
 
 /** Models excluded from tool calling entirely */
-const EXCLUDED_MODELS = new Set(["perplexity-web", "doubao-web"]);
+const EXCLUDED_MODELS = new Set(["perplexity-web"]);
 
 /** Chinese-language models */
 const CN_MODELS = new Set([

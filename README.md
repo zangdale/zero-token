@@ -152,7 +152,7 @@ make login-all
 
 **模型 id**：必须为 `提供方/模型` 形式（与 `GET /v1/models` 中每条 `id` 一致），例如 `grok-web/grok-2`、`chatgpt-web/gpt-4`、`deepseek-web/deepseek-chat`。
 
-**`user` 字段**（与 OpenAI 相同，可选）：对 `qwen-cn-web`，网关会按**同一 `user` 同一会话**复用千问浏览器/接口侧的 `session_id`（多轮在能解析到 `req_id` / `parent_req` 时还会带上续写）。不填时进程内会落到默认键，所有未带 `user` 的客户端会共享同一条 Qwen 会话，建议客户端显式设稳定 id。
+**`user` 字段**（与 OpenAI 相同，可选）：对 `qwen-cn-web`，网关会按**同一 `user` 同一会话**复用千问浏览器/接口侧的 `session_id`（多轮在能解析到 `req_id` / `parent_req` 时还会带上续写）。对 `doubao-web` 会按**同一 `user`** 复用豆包返回的 `conversation_id`（Samantha 多轮）。不填时进程内会落到默认键，多客户端会共享同一条上游会话，建议为每个终端会话设稳定 `user` id。
 
 **非流式**（`stream` 省略或 `false`）：
 

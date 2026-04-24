@@ -2,6 +2,7 @@ import type { StreamFn } from "@mariozechner/pi-agent-core";
 import {
   createAssistantMessageEventStream,
   type AssistantMessage,
+  type Context,
   type TextContent,
   type ThinkingContent,
   type ToolCall,
@@ -12,7 +13,37 @@ import {
 } from "../providers/doubao-web-client-browser.js";
 import { stripInboundMeta } from "./strip-inbound-meta.js";
 
-const sessionMap = new Map<string, string>();
+/** 按 OpenAI 请求体 `user` 隔离，复用豆包 `conversation_id`（Samantha 同一会话多轮） */
+type DoubaoWebSession = { conversationId: string };
+const doubaoWebSessionByUser = new Map<string, DoubaoWebSession>();
+
+function extractConversationIdFromDoubaoSseData(data: unknown, depth = 0): string | undefined {
+  if (depth > 12) return;
+  if (!data || typeof data !== "object") return;
+  const o = data as Record<string, unknown>;
+  for (const k of ["conversation_id", "conversationId"] as const) {
+    const v = o[k];
+    if (typeof v === "string" && v.length > 0 && v !== "0") {
+      return v;
+    }
+  }
+  if (typeof o.event_data === "string" && o.event_data.includes("conversation")) {
+    try {
+      const p = JSON.parse(o.event_data);
+      const r = extractConversationIdFromDoubaoSseData(p, depth + 1);
+      if (r) return r;
+    } catch {
+      // ignore
+    }
+  }
+  for (const v of Object.values(o)) {
+    if (v && typeof v === "object") {
+      const r = extractConversationIdFromDoubaoSseData(v, depth + 1);
+      if (r) return r;
+    }
+  }
+  return;
+}
 
 export function createDoubaoWebStreamFn(cookieOrJson: string): StreamFn {
   let options: DoubaoWebClientOptions;
@@ -31,8 +62,14 @@ export function createDoubaoWebStreamFn(cookieOrJson: string): StreamFn {
       try {
         await client.init();
 
-        const sessionKey = (context as unknown as { sessionId?: string }).sessionId || "default";
-        let sessionId = sessionMap.get(sessionKey);
+        const ext = context as Context & { user?: string; sessionId?: string };
+        const sessionKey = ext.user?.trim() || ext.sessionId || "default";
+
+        if (!doubaoWebSessionByUser.has(sessionKey)) {
+          doubaoWebSessionByUser.set(sessionKey, { conversationId: "" });
+        }
+        const st = doubaoWebSessionByUser.get(sessionKey)!;
+        const passConvId = st.conversationId.trim().length > 0 ? st.conversationId : undefined;
 
         const messages = context.messages || [];
 
@@ -56,15 +93,20 @@ export function createDoubaoWebStreamFn(cookieOrJson: string): StreamFn {
           throw new Error("No message found to send to DoubaoWeb API");
         }
 
-        console.log(`[DoubaoWebStream] Starting run for session: ${sessionKey}`);
-        console.log(`[DoubaoWebStream] Conversation ID: ${sessionId || "new"}`);
+        console.log(
+          `[DoubaoWebStream] userKey=${sessionKey} conv=${passConvId ? passConvId.slice(0, 20) + "…" : "new"}`,
+        );
         console.log(`[DoubaoWebStream] Prompt length: ${prompt.length}`);
 
-        const responseStream = await client.chatCompletions({
+        const { stream: responseStream, conversationId: newConv } = await client.chatCompletions({
           messages: [{ role: "user", content: prompt }],
           model: model.id,
           signal: streamOptions?.signal,
+          conversationId: passConvId,
         });
+        if (newConv) {
+          st.conversationId = newConv;
+        }
 
         if (!responseStream) {
           throw new Error("DoubaoWeb API returned empty response body");
@@ -375,9 +417,9 @@ export function createDoubaoWebStreamFn(cookieOrJson: string): StreamFn {
           try {
             const data = JSON.parse(dataStr);
 
-            // Extract conversation ID
-            if (data.sessionId) {
-              sessionMap.set(sessionKey, data.sessionId);
+            const cid = extractConversationIdFromDoubaoSseData(data);
+            if (cid) {
+              st.conversationId = cid;
             }
 
             // Handle Doubao's event-based response format
