@@ -15,13 +15,12 @@ export interface PerplexityWebAuthResult {
 export interface PerplexityWebAuthOptions {
   onProgress?: (message: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
-  headless?: boolean;
 }
 
 export async function loginPerplexityWeb(
   options: PerplexityWebAuthOptions = {},
 ): Promise<PerplexityWebAuthResult> {
-  const { onProgress = console.log, headless = false } = options;
+  const { onProgress = console.log } = options;
 
   const rootConfig = loadConfig();
   const browserConfig = resolveBrowserConfig(rootConfig.browser, rootConfig);

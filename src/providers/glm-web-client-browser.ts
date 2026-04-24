@@ -6,7 +6,6 @@ import { resolveBrowserConfig, resolveProfile, loadConfig } from "../lib/browser
 export interface ZWebClientOptions {
   cookie: string;
   userAgent: string;
-  headless?: boolean;
 }
 
 /** Model ID -> ChatGLM assistant_id mapping */

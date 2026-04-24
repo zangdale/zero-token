@@ -5,7 +5,6 @@ import { resolveBrowserConfig, resolveProfile, loadConfig } from "../lib/browser
 export interface GrokWebClientOptions {
   cookie: string;
   userAgent: string;
-  headless?: boolean;
 }
 
 export class GrokWebClientBrowser {

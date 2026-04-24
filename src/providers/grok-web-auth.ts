@@ -98,11 +98,10 @@ export interface GrokWebAuthResult {
 export interface GrokWebAuthOptions {
   onProgress?: (message: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
-  headless?: boolean;
 }
 
 export async function loginGrokWeb(options: GrokWebAuthOptions = {}): Promise<GrokWebAuthResult> {
-  const { onProgress = console.log, headless = false } = options;
+  const { onProgress = console.log } = options;
 
   const rootConfig = loadConfig();
   const browserConfig = resolveBrowserConfig(rootConfig.browser, rootConfig);

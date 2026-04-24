@@ -29,13 +29,25 @@
 - **Node.js** ≥ 20
 - **pnpm**（[安装](https://pnpm.io/installation)）；本仓库用 `packageManager` 固定版本，可用 [Corepack](https://nodejs.org/api/corepack.html)：`corepack enable`
 - 本机可运行的 **Google Chrome / Chromium**（用于登录与部分「聊天走浏览器」路径）
-- 启动 Chrome 时打开远程调试，例如：
+- **远程调试的 Chrome**（`--remote-debugging-port`）。推荐用本仓库脚本启动，会单独指定 `user-data-dir`（默认 `~/.zero-token/chrome-debug-profile`），避免和日常自用的 Chrome 个人资料冲突。macOS 下使用应用包内的可执行文件，比通过 `open --args` 更稳定。命令示例：
+
+  ```bash
+  make chrome-debug
+  # 无窗口，仍开 CDP（需扫码/网页登录时不要用无头，改用有界面：make chrome-debug）：
+  make chrome-debug-headless
+  # 与 make 的静默不同：终端会打印使用说明，且 Chrome 的「DevTools listening…」会出现时：
+  bash scripts/start-chrome-debug.sh
+  # 无头、且终端见说明时：
+  CHROME_HEADLESS=1 bash scripts/start-chrome-debug.sh
+  ```
+
+  `make chrome-debug` / `make chrome-debug-headless` 在内部均设置 `CHROME_DEBUG_QUIET=1`，不刷屏；需要排查时可手动运行脚本。脚本可用 `CHROME_DEBUG_PORT`、`CHROME_USER_DATA_DIR` 覆盖默认端口与用户目录；无头通过 `CHROME_HEADLESS=1` 或 `make chrome-debug-headless`。连接端点用 `BROWSER_CDP_URL`（默认 `http://127.0.0.1:9222`）。
+
+  若不用脚本，可手写启动，例如（仅示意，不分离用户目录）：
 
   ```bash
   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
   ```
-
-  默认用 `BROWSER_CDP_URL=http://127.0.0.1:9222` 连接；可通过环境变量修改。
 
 ## 快速开始
 
@@ -45,8 +57,6 @@ cd zero-token
 make install
 make chrome-debug
 make login-all
-# 可选无头模式（需要先关闭 Chrome 浏览器）
-make chrome-debug-headless
 # 启动服务
 make start
 ```
@@ -85,8 +95,8 @@ Makefile 只是对 `pnpm` / 脚本的薄封装，可直接用等价命令：
 | `make login-all` | `pnpm run login -- all` |
 | `make typecheck` | `pnpm run typecheck` |
 | `make health` | `curl -sS "http://127.0.0.1:${PORT:-3000}/health"`（需服务已启动） |
-| `make chrome-debug` | `bash scripts/start-chrome-debug.sh`（可用 `CHROME_DEBUG_PORT`、`CHROME_USER_DATA_DIR` 覆盖默认调试端口与用户目录） |
-| `make chrome-debug-headless` | `bash scripts/start-chrome-debug.sh`（无头模式，仍暴露 CDP；登录/扫码可能需有界面时勿用） |
+| `make chrome-debug` | `CHROME_DEBUG_QUIET=1 bash scripts/start-chrome-debug.sh`（有界面；无终端提示、子进程不打印；可改端口与目录，见下表环境变量。） |
+| `make chrome-debug-headless` | `CHROME_DEBUG_QUIET=1 CHROME_HEADLESS=1 bash scripts/start-chrome-debug.sh`（`--headless=new`，仍暴露 CDP。直接跑脚本时写 `CHROME_HEADLESS=1` 可相同效果。） |
 
 也可在项目根目录用与脚本相同入口：`node --import tsx src/cli/login.ts <id|all>`、`node --import tsx src/server.ts`（启动前建议仍通过 `pnpm install` 安装依赖）。
 
@@ -106,6 +116,8 @@ make login-all
 | `make` / `make help` | 打印帮助 |
 | `make install` | `pnpm install` |
 | `make start` | 启动服务；`PORT` 默认 `3000` |
+| `make chrome-debug` | 有界面、带 `--remote-debugging-port` 的 Chrome（供后续 `login`），与日常 Chrome 使用独立 `user-data-dir` |
+| `make chrome-debug-headless` | 无头（`--headless=new`）、仍暴露 CDP；需人工登录/扫码时请用 `make chrome-debug` |
 | `make login PROVIDER=<id>` | 运行浏览器登录；`<id>` 为 `src/cli/login.ts` 中列出的提供方（如 `deepseek-web`、`chatgpt-web`） |
 | `make login-all` | 按顺序执行全部提供方登录，单站失败不中断 |
 | `make typecheck` | `tsc --noEmit` |
@@ -118,6 +130,10 @@ make login-all
 |------|------|
 | `PORT` | 网关监听端口，默认 `3000` |
 | `BROWSER_CDP_URL` | Chrome 调试端点，默认 `http://127.0.0.1:9222` |
+| `CHROME_DEBUG_PORT` | 仅 `scripts/start-chrome-debug.sh`：远程调试端口，默认 `9222`；若修改，需与 `BROWSER_CDP_URL` 的端口一致 |
+| `CHROME_USER_DATA_DIR` | 仅调试脚本：Chrome 用户数据目录，默认 `~/.zero-token/chrome-debug-profile` |
+| `CHROME_DEBUG_QUIET` | 为 `1` 或 `true` 时脚本不 `echo` 且 Chrome 的 stdout/stderr 全部丢弃；`make chrome-debug` / `make chrome-debug-headless` 会设此值 |
+| `CHROME_HEADLESS` | 为 `1` 或 `true` 时脚本为 Chrome 增加 `--headless=new`（无界面，仍开远程调试；`make chrome-debug-headless` 会设此值） |
 | `ZERO_TOKEN_DATA_DIR` | 数据目录（含 `credentials.json`），默认 `~/.zero-token` |
 | `ZERO_TOKEN_API_KEY` | 若设置，请求需带 `Authorization: Bearer <key>` |
 | `ZERO_TOKEN_CHAT_VIA_BROWSER` | 对 `chatgpt-web` / `gemini-web` / `grok-web`：设为 `0` 时关闭「聊天走真实页面 DOM」路径，仍用 Node 内流式实现 |

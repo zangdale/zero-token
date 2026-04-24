@@ -15,13 +15,12 @@ export interface GeminiWebAuthResult {
 export interface GeminiWebAuthOptions {
   onProgress?: (message: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
-  headless?: boolean;
 }
 
 export async function loginGeminiWeb(
   options: GeminiWebAuthOptions = {},
 ): Promise<GeminiWebAuthResult> {
-  const { onProgress = console.log, headless = false } = options;
+  const { onProgress = console.log } = options;
 
   const rootConfig = loadConfig();
   const browserConfig = resolveBrowserConfig(rootConfig.browser, rootConfig);
@@ -38,7 +37,7 @@ export async function loginGeminiWeb(
     running = { cdpPort: profile.cdpPort };
   } else {
     onProgress("Launching browser...");
-    running = await launchOpenClawChrome(browserConfig, profile, { headless });
+    running = await launchOpenClawChrome(browserConfig, profile);
     didLaunch = true;
   }
 

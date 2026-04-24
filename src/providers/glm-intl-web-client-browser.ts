@@ -6,7 +6,6 @@ import { resolveBrowserConfig, resolveProfile, loadConfig } from "../lib/browser
 export interface GlmIntlWebClientOptions {
   cookie: string;
   userAgent: string;
-  headless?: boolean;
 }
 
 /** Model ID -> ChatGLM assistant_id mapping (国际版可能需要不同的映射) */

@@ -15,7 +15,6 @@ export interface GlmIntlWebAuthResult {
 export interface GlmIntlWebAuthOptions {
   onProgress?: (message: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
-  headless?: boolean;
 }
 
 export async function loginGlmIntlWeb(

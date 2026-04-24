@@ -15,7 +15,6 @@ export interface ZWebAuthResult {
 export interface ZWebAuthOptions {
   onProgress?: (message: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
-  headless?: boolean;
 }
 
 export async function loginZWeb(options: ZWebAuthOptions = {}): Promise<ZWebAuthResult> {

@@ -17,7 +17,6 @@ export interface KimiWebAuthResult {
 export interface KimiWebAuthOptions {
   onProgress?: (message: string) => void;
   openUrl?: (url: string) => Promise<boolean>;
-  headless?: boolean;
 }
 
 /**
