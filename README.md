@@ -1,6 +1,28 @@
 # zero-token
 
-通过**已开启远程调试的 Chrome** 完成各平台 Web 登录、保存会话，并对外提供 **OpenAI 兼容的 HTTP 接口**（`GET /v1/models`、`POST /v1/chat/completions`）。
+免 API Token 使用大模型 - 通过浏览器登录方式免费使用 ChatGPT、Claude、Gemini、DeepSeek、千问国际版、千问国内版、豆包、Kimi、智谱清言、Grok、小米 MiMo、Manus 等 AI 模型。
+
+本项目通过**已开启远程调试的 Chrome** 完成各平台 Web 登录、保存会话，并对外提供 **OpenAI 兼容的 HTTP 接口**（`GET /v1/models`、`POST /v1/chat/completions`）。
+
+## 支持的 Web 平台
+
+首句为能力概述；**实际已接入、可登录的 Web 站点**以下表为准（与 `src/cli/login.ts` 中 `ALL_PROVIDER_IDS` 一致，当前共 13 个）。登录时把 `<id>` 传给 `pnpm run login -- <id>` 或 `make login PROVIDER=<id>`。
+
+| 平台（常用名） | 提供方 `id` |
+|----------------|-------------|
+| ChatGPT | `chatgpt-web` |
+| Claude | `claude-web` |
+| Gemini | `gemini-web` |
+| DeepSeek | `deepseek-web` |
+| 千问（国际版） | `qwen-web` |
+| 千问（国内版） | `qwen-cn-web` |
+| Kimi | `kimi-web` |
+| Grok | `grok-web` |
+| 智谱清言（国内） | `glm-web` |
+| 智谱清言（国际） | `glm-intl-web` |
+| Perplexity（网页） | `perplexity-web` |
+| 豆包 | `doubao-web` |
+| 小米 MiMo | `xiaomimo-web` |
 
 ## 参考仓库
 
@@ -47,9 +69,25 @@ PORT=3001 make start
 make health
 ```
 
+### 不使用 `make` 时
+
+Makefile 只是对 `pnpm` / 脚本的薄封装，可直接用等价命令：
+
+| `make` 用法 | 等价命令 |
+|-------------|----------|
+| `make install` | `pnpm install` |
+| `make start` | `PORT=3000 pnpm start`（端口可用环境变量 `PORT` 覆盖，如 `PORT=3001 pnpm start`） |
+| `make login PROVIDER=<id>` | `pnpm run login -- <id>` |
+| `make login-all` | `pnpm run login -- all` |
+| `make typecheck` | `pnpm run typecheck` |
+| `make health` | `curl -sS "http://127.0.0.1:${PORT:-3000}/health"`（需服务已启动） |
+| `make chrome-debug` | `bash scripts/start-chrome-debug.sh`（可用 `CHROME_DEBUG_PORT`、`CHROME_USER_DATA_DIR` 覆盖默认调试端口与用户目录） |
+
+也可在项目根目录用与脚本相同入口：`node --import tsx src/cli/login.ts <id|all>`、`node --import tsx src/server.ts`（启动前建议仍通过 `pnpm install` 安装依赖）。
+
 ### 全平台顺序登录
 
-依次尝试登录**全部**已支持的 Web 提供方（与 `src/cli/login.ts` 中 `ALL_PROVIDER_IDS` 一致，当前共 13 个）。**每个站点仍需你在浏览器中完成该站的登录/授权流程**；某一站失败会记录错误并继续下一站，结束时会打印成功/失败汇总。
+依次尝试登录**全部**已支持的 Web 提供方（与上表及 `ALL_PROVIDER_IDS` 一致，当前共 13 个）。**每个站点仍需你在浏览器中完成该站的登录/授权流程**；某一站失败会记录错误并继续下一站，结束时会打印成功/失败汇总。
 
 ```bash
 make login-all
@@ -149,6 +187,7 @@ const r = await openai.chat.completions.create({
 
 ```bash
 make typecheck
+# 等价: pnpm run typecheck
 ```
 
 ## 许可
